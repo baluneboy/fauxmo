@@ -35,7 +35,14 @@ import sys
 import time
 import urllib
 import uuid
+import datetime
 
+import RPi.GPIO as GPIO
+
+# from blinkstick import blinkstick
+# bstick = blinkstick.find_first()
+# if bstick is None:
+#     sys.exit("BlinkStick not found...")
 
 
 # This XML is the minimum needed to define one of our virtual switches
@@ -60,8 +67,20 @@ DEBUG = False
 def dbg(msg):
     global DEBUG
     if DEBUG:
-        print msg
+        print datetime.datetime.now(), msg
         sys.stdout.flush()
+
+
+def toggle_pinout(pinout=17, sec=1.5):
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(pinout, GPIO.OUT) 
+    GPIO.output(pinout, GPIO.HIGH)
+    dbg("HIGH")
+    dbg('sleep for %d sec' % sec)
+    time.sleep(sec)
+    GPIO.output(pinout, GPIO.LOW)
+    dbg("LOW")
+    GPIO.cleanup()  # Reset GPIO settings
 
 
 # A simple utility class to wait for incoming data to be
@@ -360,17 +379,47 @@ class upnp_broadcast_responder(object):
 # and off command are invoked respectively. It ignores any return data.
 
 class rest_api_handler(object):
-    def __init__(self, on_cmd, off_cmd):
+    def __init__(self, on_cmd, off_cmd, on_color='green', off_color='red'):
         self.on_cmd = on_cmd
         self.off_cmd = off_cmd
+        self.on_color = on_color
+        self.off_color = off_color
 
     def on(self):
-        r = requests.get(self.on_cmd)
-        return r.status_code == 200
+        dbg("on_cmd recv'd by %s" % self.__class__.__name__)
+        # for _ in range(3):
+        #     bstick.set_color(name=self.on_color)
+        #     time.sleep(0.25)
+        #     bstick.turn_off()
+        #     time.sleep(0.25)
+        toggle_pinout()
+        return True
+        try:
+            dbg("trying requests.get for ON cmd")
+            r = requests.get(self.on_cmd)
+            dbg("done trying requests.get for ON cmd")                                  
+            status_code = r.status_code
+        except:
+            status_code = 200
+        return status_code == 200
 
     def off(self):
-        r = requests.get(self.off_cmd)
-        return r.status_code == 200
+        dbg("off_cmd recv'd by %s" % self.__class__.__name__)
+        # for _ in range(3):
+        #     bstick.set_color(name=self.off_color)
+        #     time.sleep(0.25)
+        #     bstick.turn_off()
+        #     time.sleep(0.25)
+        toggle_pinout()
+        return True
+        try:
+            dbg("trying requests.get for OFF cmd")          
+            r = requests.get(self.off_cmd)
+            dbg("done trying requests.get for OFF cmd")                      
+            status_code = r.status_code
+        except:
+            status_code = 200
+        return status_code == 200
 
 
 # Each entry is a list with the following elements:
@@ -384,8 +433,8 @@ class rest_api_handler(object):
 # list will be used.
 
 FAUXMOS = [
-    ['office lights', rest_api_handler('http://192.168.5.4/ha-api?cmd=on&a=office', 'http://192.168.5.4/ha-api?cmd=off&a=office')],
-    ['kitchen lights', rest_api_handler('http://192.168.5.4/ha-api?cmd=on&a=kitchen', 'http://192.168.5.4/ha-api?cmd=off&a=kitchen')],
+    ['office lights', rest_api_handler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='blue', off_color='orange')],
+    ['kitchen lights', rest_api_handler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen')],
 ]
 
 
