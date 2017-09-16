@@ -36,9 +36,10 @@ import time
 import urllib
 import uuid
 import datetime
-import threading
+
+from multiprocessing import Pool, TimeoutError
+
 import os
-import Queue
 
 from pims.wemocontrol import wemo_backend
 
@@ -78,100 +79,18 @@ def dbg(msg):
 
 
 def toggle_pinout(pinout=17, sec=1):
-    if DEBUG:
-        dbg('remove DEBUG check in toggle_pinout to DEPLOY')
-        return
+    # if DEBUG:
+    #     dbg('Remove DEBUG check in toggle_pinout to DEPLOY')
+    #     return
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(pinout, GPIO.OUT) 
     GPIO.output(pinout, GPIO.HIGH)
-    dbg("HIGH")
+    dbg("GPIO (BCM) PINOUT %d PUSHED HIGH" % pinout)
     dbg('sleep for %d sec' % sec)
     time.sleep(sec)
     GPIO.output(pinout, GPIO.LOW)
-    dbg("LOW")
+    dbg("GPIO (BCM) PINOUT %d PULLED LOW" % pinout)
     GPIO.cleanup()  # Reset GPIO settings
-
-
-# Start threading with this function.
-def start_threading(args):
-    # Create a single input and a single output queue for all threads.
-    dir_q = Queue.Queue()
-    result_q = Queue.Queue()
-
-    # Create the "thread pool"
-    pool = [WorkerThread(dir_q=dir_q, result_q=result_q) for _ in range(9)]
-
-    # Start all threads
-    for thread in pool:
-        thread.start()
-
-    # Give the workers some work to do
-    work_count = 0
-    for my_dir in args:
-        if os.path.exists(my_dir):
-            work_count += 1
-            dir_q.put(my_dir)
-
-    dbg('Assigned %s dirs to workers' % work_count)
-
-    # Now get all the results
-    while work_count > 0:
-        # Blocking 'get' from a Queue.
-        result = result_q.get()
-        dbg('From thread %s: %s files found in dir %s' % (
-            result[0], len(result[2]), result[1]))
-        work_count -= 1
-
-    # Ask threads to die and wait for them to do it
-    for thread in pool:
-        thread.join()
-
-
-# A worker thread class to handle "after toggle_pinout duties".
-class WorkerThread(threading.Thread):
-    """ A worker thread that takes directory names from a queue, finds all
-        files in them recursively and reports the result.
-
-        Input is done by placing directory names (as strings) into the
-        Queue passed in dir_q.
-
-        Output is done by placing tuples into the Queue passed in result_q.
-        Each tuple is (thread_name, dir_name, [list of files]).
-
-        Ask the thread to stop by calling its join() method.
-    """
-
-    def __init__(self, dir_q, result_q):
-        super(WorkerThread, self).__init__()
-        self.dir_q = dir_q
-        self.result_q = result_q
-        self.stop_request = threading.Event()
-
-    def run(self):
-        # As long as we weren't asked to stop, try to take new tasks from the
-        # queue. The tasks are taken with a blocking 'get', so no CPU
-        # cycles are wasted while waiting.
-        # Also, 'get' is given a timeout, so stop_request is always checked,
-        # even if there's nothing in the queue.
-        while not self.stop_request.isSet():
-            try:
-                dir_name = self.dir_q.get(True, 0.05)
-                file_names = list(self._files_in_dir(dir_name))
-                self.result_q.put((self.name, dir_name, file_names))
-            except Queue.Empty:
-                continue
-
-    def join(self, timeout=None):
-        self.stop_request.set()
-        super(WorkerThread, self).join(timeout)
-
-    def _files_in_dir(self, dirname):
-        """ Given a directory name, yields the names of all files (not dirs)
-            contained in this directory and its sub-directories.
-        """
-        for path, dirs, files in os.walk(dirname):
-            for f in files:
-                yield os.path.join(path, f)
 
 
 # A simple utility class to wait for incoming data to be
@@ -230,7 +149,7 @@ class upnp_device(object):
             except:
                 upnp_device.this_host_ip = '127.0.0.1'
             del(temp_socket)
-            dbg("got local address of %s" % upnp_device.this_host_ip)
+            dbg("Got local address of %s" % upnp_device.this_host_ip)
         return upnp_device.this_host_ip
         
 
@@ -461,28 +380,46 @@ class upnp_broadcast_responder(object):
         dbg("UPnP broadcast listener: new device registered")
 
 
+def sleep_and_wemo_off(sleep_sec, wemo_name):
+    time.sleep(sleep_sec)  # our 30-second wait to get downstairs & flip switch
+    try:
+        wemo_backend.wemo_dict[wemo_name].off()
+        msg = 'slept for %d sec and then turned off the %s' % (sleep_sec, wemo_name)
+    except ValueError:
+        msg = 'slept for %d sec, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
+    return msg
+
+
+def squawk_callback(s):
+    """for multiprocessing, this shows what we get [when we get it]
+    from sleep_and_wemo_off
+    """
+    dbg('Squawk_callback: %s' % s)
+
+
 # This is an example handler class. The fauxmo class expects handlers to be
 # instances of objects that have on() and off() methods that return True
 # on success and False otherwise.
 #
 # This example class takes two full URLs that should be requested when an on
 # and off command are invoked respectively. It ignores any return data.
+class RestApiHandler(object):
 
-class rest_api_handler(object):
     def __init__(self, on_cmd, off_cmd, on_color='green', off_color='red'):
         self.on_cmd = on_cmd
         self.off_cmd = off_cmd
         self.on_color = on_color
         self.off_color = off_color
+        self._pool = Pool(processes=4)  # start 4 worker processes
 
     def on(self):
-        dbg("on_cmd recv'd by %s" % self.__class__.__name__)
+        dbg("The on_cmd recv'd by %s" % self.__class__.__name__)
         for _ in range(3):
             bstick.set_color(name=self.on_color)
             time.sleep(0.25)
             bstick.turn_off()
             time.sleep(0.25)
-        toggle_pinout()
+        #toggle_pinout()
         return True
         # try:
         #     dbg("trying requests.get for ON cmd")
@@ -494,12 +431,13 @@ class rest_api_handler(object):
         # return status_code == 200
 
     def off(self):
-        dbg("off_cmd recv'd by %s" % self.__class__.__name__)
+        dbg("The off_cmd recv'd by %s" % self.__class__.__name__)
         for _ in range(6):
             bstick.set_color(name='yellow')
-            time.sleep(0.1)
+            time.sleep(0.08)
             bstick.turn_off()
-            time.sleep(0.1)
+            time.sleep(0.08)
+            bstick.turn_off()
         toggle_pinout()
         for _ in range(3):
             bstick.set_color(name=self.off_color)
@@ -507,10 +445,9 @@ class rest_api_handler(object):
             bstick.turn_off()
             time.sleep(0.25)
 
-        # put sleep and "torch off" actions in a thread so we do not timeout for Alexa
-        # time.sleep(60)  # FIXME this probably causes Alexa "kitchen lights isn't responding
-        # wemo_backend.wemo_dict['torch'].off()
-        start_threading(['/tmp', '/tmp/one', '/tmp/two'])
+        # use multiprocessing async to do "sleep and torch off" so Alexa does not timeout
+        self._pool.apply_async(sleep_and_wemo_off, (30, 'torch'), callback=squawk_callback)
+        dbg('Delayed multiprocessing being done async now so Alexa does not timeout')
 
         return True
 
@@ -535,8 +472,8 @@ class rest_api_handler(object):
 # list will be used.
 
 FAUXMOS = [
-    ['office lights', rest_api_handler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='blue', off_color='orange')],
-    ['kitchen lights', rest_api_handler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen')],
+    ['office lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='blue', off_color='orange')],
+    ['kitchen lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen')],
 ]
 
 
