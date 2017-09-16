@@ -36,13 +36,18 @@ import time
 import urllib
 import uuid
 import datetime
+import threading
+import os
+import Queue
+
+from pims.wemocontrol import wemo_backend
 
 import RPi.GPIO as GPIO
 
-# from blinkstick import blinkstick
-# bstick = blinkstick.find_first()
-# if bstick is None:
-#     sys.exit("BlinkStick not found...")
+from blinkstick import blinkstick
+bstick = blinkstick.find_first()
+if bstick is None:
+    sys.exit("BlinkStick not found...")
 
 
 # This XML is the minimum needed to define one of our virtual switches
@@ -64,6 +69,7 @@ SETUP_XML = """<?xml version="1.0"?>
 
 DEBUG = False
 
+
 def dbg(msg):
     global DEBUG
     if DEBUG:
@@ -71,7 +77,10 @@ def dbg(msg):
         sys.stdout.flush()
 
 
-def toggle_pinout(pinout=17, sec=1.5):
+def toggle_pinout(pinout=17, sec=1):
+    if DEBUG:
+        dbg('remove DEBUG check in toggle_pinout to DEPLOY')
+        return
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(pinout, GPIO.OUT) 
     GPIO.output(pinout, GPIO.HIGH)
@@ -83,9 +92,90 @@ def toggle_pinout(pinout=17, sec=1.5):
     GPIO.cleanup()  # Reset GPIO settings
 
 
+# Start threading with this function.
+def start_threading(args):
+    # Create a single input and a single output queue for all threads.
+    dir_q = Queue.Queue()
+    result_q = Queue.Queue()
+
+    # Create the "thread pool"
+    pool = [WorkerThread(dir_q=dir_q, result_q=result_q) for _ in range(9)]
+
+    # Start all threads
+    for thread in pool:
+        thread.start()
+
+    # Give the workers some work to do
+    work_count = 0
+    for my_dir in args:
+        if os.path.exists(my_dir):
+            work_count += 1
+            dir_q.put(my_dir)
+
+    dbg('Assigned %s dirs to workers' % work_count)
+
+    # Now get all the results
+    while work_count > 0:
+        # Blocking 'get' from a Queue.
+        result = result_q.get()
+        dbg('From thread %s: %s files found in dir %s' % (
+            result[0], len(result[2]), result[1]))
+        work_count -= 1
+
+    # Ask threads to die and wait for them to do it
+    for thread in pool:
+        thread.join()
+
+
+# A worker thread class to handle "after toggle_pinout duties".
+class WorkerThread(threading.Thread):
+    """ A worker thread that takes directory names from a queue, finds all
+        files in them recursively and reports the result.
+
+        Input is done by placing directory names (as strings) into the
+        Queue passed in dir_q.
+
+        Output is done by placing tuples into the Queue passed in result_q.
+        Each tuple is (thread_name, dir_name, [list of files]).
+
+        Ask the thread to stop by calling its join() method.
+    """
+
+    def __init__(self, dir_q, result_q):
+        super(WorkerThread, self).__init__()
+        self.dir_q = dir_q
+        self.result_q = result_q
+        self.stop_request = threading.Event()
+
+    def run(self):
+        # As long as we weren't asked to stop, try to take new tasks from the
+        # queue. The tasks are taken with a blocking 'get', so no CPU
+        # cycles are wasted while waiting.
+        # Also, 'get' is given a timeout, so stop_request is always checked,
+        # even if there's nothing in the queue.
+        while not self.stop_request.isSet():
+            try:
+                dir_name = self.dir_q.get(True, 0.05)
+                file_names = list(self._files_in_dir(dir_name))
+                self.result_q.put((self.name, dir_name, file_names))
+            except Queue.Empty:
+                continue
+
+    def join(self, timeout=None):
+        self.stop_request.set()
+        super(WorkerThread, self).join(timeout)
+
+    def _files_in_dir(self, dirname):
+        """ Given a directory name, yields the names of all files (not dirs)
+            contained in this directory and its sub-directories.
+        """
+        for path, dirs, files in os.walk(dirname):
+            for f in files:
+                yield os.path.join(path, f)
+
+
 # A simple utility class to wait for incoming data to be
 # ready on a socket.
-
 class poller:
     def __init__(self):
         if 'poll' in dir(select):
@@ -95,7 +185,7 @@ class poller:
             self.use_poll = False
         self.targets = {}
 
-    def add(self, target, fileno = None):
+    def add(self, target, fileno=None):
         if not fileno:
             fileno = target.fileno()
         if self.use_poll:
@@ -387,39 +477,51 @@ class rest_api_handler(object):
 
     def on(self):
         dbg("on_cmd recv'd by %s" % self.__class__.__name__)
-        # for _ in range(3):
-        #     bstick.set_color(name=self.on_color)
-        #     time.sleep(0.25)
-        #     bstick.turn_off()
-        #     time.sleep(0.25)
+        for _ in range(3):
+            bstick.set_color(name=self.on_color)
+            time.sleep(0.25)
+            bstick.turn_off()
+            time.sleep(0.25)
         toggle_pinout()
         return True
-        try:
-            dbg("trying requests.get for ON cmd")
-            r = requests.get(self.on_cmd)
-            dbg("done trying requests.get for ON cmd")                                  
-            status_code = r.status_code
-        except:
-            status_code = 200
-        return status_code == 200
+        # try:
+        #     dbg("trying requests.get for ON cmd")
+        #     r = requests.get(self.on_cmd)
+        #     dbg("done trying requests.get for ON cmd")
+        #     status_code = r.status_code
+        # except:
+        #     status_code = 200
+        # return status_code == 200
 
     def off(self):
         dbg("off_cmd recv'd by %s" % self.__class__.__name__)
-        # for _ in range(3):
-        #     bstick.set_color(name=self.off_color)
-        #     time.sleep(0.25)
-        #     bstick.turn_off()
-        #     time.sleep(0.25)
+        for _ in range(6):
+            bstick.set_color(name='yellow')
+            time.sleep(0.1)
+            bstick.turn_off()
+            time.sleep(0.1)
         toggle_pinout()
+        for _ in range(3):
+            bstick.set_color(name=self.off_color)
+            time.sleep(0.25)
+            bstick.turn_off()
+            time.sleep(0.25)
+
+        # put sleep and "torch off" actions in a thread so we do not timeout for Alexa
+        # time.sleep(60)  # FIXME this probably causes Alexa "kitchen lights isn't responding
+        # wemo_backend.wemo_dict['torch'].off()
+        start_threading(['/tmp', '/tmp/one', '/tmp/two'])
+
         return True
-        try:
-            dbg("trying requests.get for OFF cmd")          
-            r = requests.get(self.off_cmd)
-            dbg("done trying requests.get for OFF cmd")                      
-            status_code = r.status_code
-        except:
-            status_code = 200
-        return status_code == 200
+
+        # try:
+        #     dbg("trying requests.get for OFF cmd")
+        #     r = requests.get(self.off_cmd)
+        #     dbg("done trying requests.get for OFF cmd")
+        #     status_code = r.status_code
+        # except:
+        #     status_code = 200
+        # return status_code == 200
 
 
 # Each entry is a list with the following elements:
