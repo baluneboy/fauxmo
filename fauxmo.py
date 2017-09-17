@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python -B
 
 """
 The MIT License (MIT)
@@ -79,9 +79,9 @@ def dbg(msg):
 
 
 def toggle_pinout(pinout=17, sec=1):
-    # if DEBUG:
-    #     dbg('Remove DEBUG check in toggle_pinout to DEPLOY')
-    #     return
+    if DEBUG:
+        dbg('Remove DEBUG check in toggle_pinout to DEPLOY')
+        return
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(pinout, GPIO.OUT) 
     GPIO.output(pinout, GPIO.HIGH)
@@ -380,21 +380,65 @@ class upnp_broadcast_responder(object):
         dbg("UPnP broadcast listener: new device registered")
 
 
+def is_time_between(now_time, start_time, end_time):
+    """return True if given time (no date) is in between start & end times (end not included)"""
+    if start_time <= end_time:
+        return start_time <= now_time < end_time
+    else:  # over midnight e.g., 23:30-04:15
+        return start_time <= now_time or now_time < end_time
+
+
+def is_weekday_work_time(start_time, end_time):
+    """return True if today is weekday and time is between start_time & end_time"""
+    b = False
+    d = datetime.datetime.now()
+    if d.isoweekday() in range(1, 6):
+        b = is_time_between(d.time(), start_time, end_time)
+    return b
+
+
+# FIXME refactor this function with is_weekday_work_time to consolidate
+def is_sunday_mass_time(start_time, end_time):
+    """return True if today is Sunday and time is between start_time & end_time"""
+    b = False
+    d = datetime.datetime.now()
+    if d.isoweekday() == 7:
+        b = is_time_between(d.time(), start_time, end_time)
+    return b
+
+
+def is_garage_open_time():
+    """return True if it's day/time for work or for mass"""
+    # weekday work time range (t1, t2)
+    t1 = datetime.datetime(2017, 8, 31, 5, 40, 0).time()  # only consider time part
+    t2 = datetime.datetime(2017, 8, 31, 6, 50, 0).time()  # only consider time part
+
+    # Sunday mass time range (t1, t2)
+    t3 = datetime.datetime(2017, 8, 31, 8, 10, 0).time()  # only consider time part
+    t4 = datetime.datetime(2017, 8, 31, 9, 00, 0).time()  # only consider time part
+
+    return is_weekday_work_time(t1, t2) or is_sunday_mass_time(t3, t4)
+
+
 def sleep_and_wemo_off(sleep_sec, wemo_name):
-    time.sleep(sleep_sec)  # our 30-second wait to get downstairs & flip switch
-    try:
-        wemo_backend.wemo_dict[wemo_name].off()
-        msg = 'slept for %d sec and then turned off the %s' % (sleep_sec, wemo_name)
-    except ValueError:
-        msg = 'slept for %d sec, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
+    """if weekday_work or sunday_mass times, then turn off wemo device"""
+    if is_garage_open_time():
+        time.sleep(sleep_sec)  # wait several seconds to get downstairs & flip switch
+        try:
+            wemo_backend.wemo_dict[wemo_name].off()
+            msg = 'slept for %d sec and then turned off the %s' % (sleep_sec, wemo_name)
+        except ValueError:
+            msg = 'slept for %d sec, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
+    else:
+        msg = 'did nothing because not a garage opening day/time'
     return msg
 
 
-def squawk_callback(s):
-    """for multiprocessing, this shows what we get [when we get it]
-    from sleep_and_wemo_off
+def just_squawk(s):
+    """for multiprocessing, a callback that shows what's returned from a func eval
+    [ whenever that occurs asynchronously ] -- the func here is sleep_and_wemo_off
     """
-    dbg('Squawk_callback: %s' % s)
+    dbg('The just_squawk callback function %s.' % s)
 
 
 # This is an example handler class. The fauxmo class expects handlers to be
@@ -446,7 +490,7 @@ class RestApiHandler(object):
             time.sleep(0.25)
 
         # use multiprocessing async to do "sleep and torch off" so Alexa does not timeout
-        self._pool.apply_async(sleep_and_wemo_off, (30, 'torch'), callback=squawk_callback)
+        self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
         dbg('Delayed multiprocessing being done async now so Alexa does not timeout')
 
         return True
@@ -472,8 +516,9 @@ class RestApiHandler(object):
 # list will be used.
 
 FAUXMOS = [
-    ['office lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='blue', off_color='orange')],
-    ['kitchen lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen')],
+    ['office lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='cyan', off_color='magenta')],
+    ['kitchen lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen', on_color='orange', off_color='blue')],
+    ['garage lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=garage', 'http://192.168.1.109/ha-api?cmd=off&a=garage', on_color='green', off_color='red')],
 ]
 
 
