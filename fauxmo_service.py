@@ -11,7 +11,7 @@ LOG_FILENAME = "/tmp/myservice.log"
 LOG_LEVEL = logging.DEBUG  # Could be e.g. "DEBUG" or "WARNING"
 
 # Define and parse command line arguments
-parser = argparse.ArgumentParser(description="My simple fauxmo python service")
+parser = argparse.ArgumentParser(description="My simple Fauxmo python service")
 parser.add_argument("-l", "--log", help="file to write log to (default '" + LOG_FILENAME + "')")
 
 # If the log file is specified on the command line then override the default

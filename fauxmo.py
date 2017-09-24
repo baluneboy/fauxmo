@@ -24,7 +24,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-# For a complete discussion, see http://www.makermusings.com
+# For some discussion, see http://www.makermusings.com
 
 import email.utils
 import requests
@@ -79,9 +79,10 @@ def dbg(msg):
 
 
 def toggle_pinout(pinout=17, sec=1):
-    if DEBUG:
-        dbg('Remove DEBUG check in toggle_pinout to DEPLOY')
-        return
+    # uncomment the next few lines to just test (comment them to actually deploy)
+    # if DEBUG:
+    #     dbg('Remove DEBUG check in toggle_pinout to DEPLOY')
+    #     return
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(pinout, GPIO.OUT) 
     GPIO.output(pinout, GPIO.HIGH)
@@ -95,7 +96,8 @@ def toggle_pinout(pinout=17, sec=1):
 
 # A simple utility class to wait for incoming data to be
 # ready on a socket.
-class poller:
+class Poller(object):
+
     def __init__(self):
         if 'poll' in dir(select):
             self.use_poll = True
@@ -136,22 +138,21 @@ class poller:
 # but it supports either specified or automatic IP address and port
 # selection.
 
-class upnp_device(object):
+class UpnpDevice(object):
     this_host_ip = None
 
     @staticmethod
     def local_ip_address():
-        if not upnp_device.this_host_ip:
+        if not UpnpDevice.this_host_ip:
             temp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
                 temp_socket.connect(('8.8.8.8', 53))
-                upnp_device.this_host_ip = temp_socket.getsockname()[0]
+                UpnpDevice.this_host_ip = temp_socket.getsockname()[0]
             except:
-                upnp_device.this_host_ip = '127.0.0.1'
+                UpnpDevice.this_host_ip = '127.0.0.1'
             del(temp_socket)
-            dbg("Got local address of %s" % upnp_device.this_host_ip)
-        return upnp_device.this_host_ip
-        
+            dbg("Got local address of %s" % UpnpDevice.this_host_ip)
+        return UpnpDevice.this_host_ip
 
     def __init__(self, listener, poller, port, root_url, server_version, persistent_uuid, other_headers = None, ip_address = None):
         self.listener = listener
@@ -166,7 +167,7 @@ class upnp_device(object):
         if ip_address:
             self.ip_address = ip_address
         else:
-            self.ip_address = upnp_device.local_ip_address()
+            self.ip_address = UpnpDevice.local_ip_address()
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.ip_address, self.port))
@@ -222,8 +223,8 @@ class upnp_device(object):
  
 
 # This subclass does the bulk of the work to mimic a WeMo switch on the network.
+class Fauxmo(UpnpDevice):
 
-class fauxmo(upnp_device):
     @staticmethod
     def make_uuid(name):
         return ''.join(["%x" % sum([ord(c) for c in name])] + ["%x" % ord(c) for c in "%sfauxmo!" % name])[:14]
@@ -234,7 +235,7 @@ class fauxmo(upnp_device):
         self.ip_address = ip_address
         persistent_uuid = "Socket-1_0-" + self.serial
         other_headers = ['X-User-Agent: redsonic']
-        upnp_device.__init__(self, listener, poller, port, "http://%(ip_address)s:%(port)s/setup.xml", "Unspecified, UPnP/1.0, Unspecified", persistent_uuid, other_headers=other_headers, ip_address=ip_address)
+        UpnpDevice.__init__(self, listener, poller, port, "http://%(ip_address)s:%(port)s/setup.xml", "Unspecified, UPnP/1.0, Unspecified", persistent_uuid, other_headers=other_headers, ip_address=ip_address)
         if action_handler:
             self.action_handler = action_handler
         else:
@@ -307,8 +308,8 @@ class fauxmo(upnp_device):
 # from the Amazon Echo for WeMo devices. In particular, it does not
 # support the more common root device general search. The Echo
 # doesn't search for root devices.
+class UpnpBroadcastResponder(object):
 
-class upnp_broadcast_responder(object):
     TIMEOUT = 0
 
     def __init__(self):
@@ -319,10 +320,10 @@ class upnp_broadcast_responder(object):
         self.ip = '239.255.255.250'
         self.port = 1900
         try:
-            #This is needed to join a multicast group
+            # This is needed to join a multicast group
             self.mreq = struct.pack("4sl",socket.inet_aton(self.ip),socket.INADDR_ANY)
 
-            #Set up server socket
+            # Set up server socket
             self.ssock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM,socket.IPPROTO_UDP)
             self.ssock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 
@@ -357,7 +358,7 @@ class upnp_broadcast_responder(object):
             else:
                 pass
 
-    #Receive network data
+    # Receive network data
     def recvfrom(self,size):
         if self.TIMEOUT:
             self.ssock.setblocking(0)
@@ -397,7 +398,7 @@ def is_weekday_work_time(start_time, end_time):
     return b
 
 
-# FIXME refactor this function with is_weekday_work_time to consolidate
+# FIXME refactor this function with is_weekday_work_time
 def is_sunday_mass_time(start_time, end_time):
     """return True if today is Sunday and time is between start_time & end_time"""
     b = False
@@ -409,12 +410,12 @@ def is_sunday_mass_time(start_time, end_time):
 
 def is_garage_open_time():
     """return True if it's day/time for work or for mass"""
-    # weekday work time range (t1, t2)
+    # define "go to work" time range (t1, t2) for a weekday
     t1 = datetime.datetime(2017, 8, 31, 5, 40, 0).time()  # only consider time part
     t2 = datetime.datetime(2017, 8, 31, 6, 50, 0).time()  # only consider time part
 
-    # Sunday mass time range (t1, t2)
-    t3 = datetime.datetime(2017, 8, 31, 8, 10, 0).time()  # only consider time part
+    # define "go to mass" time range (t1, t2) for a Sunday
+    t3 = datetime.datetime(2017, 8, 31, 8, 00, 0).time()  # only consider time part
     t4 = datetime.datetime(2017, 8, 31, 9, 00, 0).time()  # only consider time part
 
     return is_weekday_work_time(t1, t2) or is_sunday_mass_time(t3, t4)
@@ -430,7 +431,7 @@ def sleep_and_wemo_off(sleep_sec, wemo_name):
         except ValueError:
             msg = 'slept for %d sec, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
     else:
-        msg = 'did nothing because not a garage opening day/time'
+        msg = 'did nothing for "sleep_and_wemo_off" because it is not one of those days/times'
     return msg
 
 
@@ -441,7 +442,7 @@ def just_squawk(s):
     dbg('The just_squawk callback function %s.' % s)
 
 
-# This is an example handler class. The fauxmo class expects handlers to be
+# This is an example handler class. The Fauxmo class expects handlers to be
 # instances of objects that have on() and off() methods that return True
 # on success and False otherwise.
 #
@@ -454,55 +455,64 @@ class RestApiHandler(object):
         self.off_cmd = off_cmd
         self.on_color = on_color
         self.off_color = off_color
-        self._pool = Pool(processes=4)  # start 4 worker processes
+        self._pool = Pool(processes=3)  # start 3 worker processes
 
     def on(self):
-        dbg("The on_cmd recv'd by %s" % self.__class__.__name__)
+        dbg("The on_cmd received by %s" % self.__class__.__name__)
         for _ in range(3):
             bstick.set_color(name=self.on_color)
             time.sleep(0.25)
             bstick.turn_off()
             time.sleep(0.25)
-        #toggle_pinout()
         return True
-        # try:
-        #     dbg("trying requests.get for ON cmd")
-        #     r = requests.get(self.on_cmd)
-        #     dbg("done trying requests.get for ON cmd")
-        #     status_code = r.status_code
-        # except:
-        #     status_code = 200
-        # return status_code == 200
 
     def off(self):
-        dbg("The off_cmd recv'd by %s" % self.__class__.__name__)
-        for _ in range(6):
-            bstick.set_color(name='yellow')
-            time.sleep(0.08)
-            bstick.turn_off()
-            time.sleep(0.08)
-            bstick.turn_off()
-        toggle_pinout()
+        dbg("The off_cmd received by %s" % self.__class__.__name__)
         for _ in range(3):
             bstick.set_color(name=self.off_color)
             time.sleep(0.25)
             bstick.turn_off()
             time.sleep(0.25)
+        return True
 
+
+class GarageRestApiHandler(RestApiHandler):
+
+    def on(self):
+        dbg("The on_cmd received by %s" % self.__class__.__name__)
+        for _ in range(3):
+            bstick.set_color(name=self.on_color)
+            time.sleep(0.250)
+            bstick.turn_off()
+            time.sleep(0.250)
+
+        # ftw
+        toggle_pinout()  # raspberry pi hack to, in effect, push garage door remote via relay
+
+        # depending on day of week and time of day, we push garage door remote button...and
         # use multiprocessing async to do "sleep and torch off" so Alexa does not timeout
         self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
         dbg('Delayed multiprocessing being done async now so Alexa does not timeout')
 
         return True
 
-        # try:
-        #     dbg("trying requests.get for OFF cmd")
-        #     r = requests.get(self.off_cmd)
-        #     dbg("done trying requests.get for OFF cmd")
-        #     status_code = r.status_code
-        # except:
-        #     status_code = 200
-        # return status_code == 200
+    def off(self):
+        dbg("The off_cmd received by %s" % self.__class__.__name__)
+        for _ in range(3):
+            bstick.set_color(name=self.off_color)
+            time.sleep(0.250)
+            bstick.turn_off()
+            time.sleep(0.250)
+
+        # ftw
+        toggle_pinout()  # raspberry pi hack to, in effect, push garage door remote via relay
+
+        # depending on day of week and time of day, we push garage door remote button...and
+        # use multiprocessing async to do "sleep and torch off" so Alexa does not timeout
+        self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
+        dbg('Delayed multiprocessing being done async now so Alexa does not timeout')
+
+        return True
 
 
 # Each entry is a list with the following elements:
@@ -514,11 +524,10 @@ class RestApiHandler(object):
 # NOTE: As of 2015-08-17, the Echo appears to have a hard-coded limit of
 # 16 switches it can control. Only the first 16 elements of the FAUXMOS
 # list will be used.
-
 FAUXMOS = [
     ['office lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='cyan', off_color='magenta')],
     ['kitchen lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen', on_color='orange', off_color='blue')],
-    ['garage lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=garage', 'http://192.168.1.109/ha-api?cmd=off&a=garage', on_color='green', off_color='red')],
+    ['garage door', GarageRestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=garage', 'http://192.168.1.109/ha-api?cmd=off&a=garage', on_color='green', off_color='red')],
 ]
 
 
@@ -526,13 +535,13 @@ if len(sys.argv) > 1 and sys.argv[1] == '-d':
     DEBUG = True
 
 # Set up our singleton for polling the sockets for data ready
-p = poller()
+p = Poller()
 
 # Set up our singleton listener for UPnP broadcasts
-u = upnp_broadcast_responder()
+u = UpnpBroadcastResponder()
 u.init_socket()
 
-# Add the UPnP broadcast listener to the poller so we can respond
+# Add the UPnP broadcast listener to the Poller so we can respond
 # when a broadcast is received.
 p.add(u)
 
@@ -541,7 +550,7 @@ for one_faux in FAUXMOS:
     if len(one_faux) == 2:
         # a fixed port wasn't specified, use a dynamic one
         one_faux.append(0)
-    switch = fauxmo(one_faux[0], u, p, None, one_faux[2], action_handler = one_faux[1])
+    switch = Fauxmo(one_faux[0], u, p, None, one_faux[2], action_handler = one_faux[1])
 
 dbg("Entering main loop\n")
 
