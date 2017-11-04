@@ -69,7 +69,7 @@ SETUP_XML = """<?xml version="1.0"?>
 
 
 DEBUG = False
-
+DRYRUN = True
 
 def dbg(msg):
     global DEBUG
@@ -78,11 +78,14 @@ def dbg(msg):
         sys.stdout.flush()
 
 
-def toggle_pinout(pinout=17, sec=1):
-    # uncomment the next few lines to just test (comment them to actually deploy)
-    # if DEBUG:
-    #     dbg('Remove DEBUG check in toggle_pinout to DEPLOY')
-    #     return
+def log(msg):
+    dbg(msg)
+
+
+def toggle_pinout(pinout=17, sec=1, dry_run=False):
+    if dry_run:
+        dbg('Need dry_run=False for toggle_pinout to actually work.')
+        return
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(pinout, GPIO.OUT) 
     GPIO.output(pinout, GPIO.HIGH)
@@ -92,6 +95,7 @@ def toggle_pinout(pinout=17, sec=1):
     GPIO.output(pinout, GPIO.LOW)
     dbg("GPIO (BCM) PINOUT %d PULLED LOW" % pinout)
     GPIO.cleanup()  # Reset GPIO settings
+    log("This will be the daily log message, so make it good.")
 
 
 # A simple utility class to wait for incoming data to be
@@ -137,7 +141,6 @@ class Poller(object):
 # Base class for a generic UPnP device. This is far from complete
 # but it supports either specified or automatic IP address and port
 # selection.
-
 class UpnpDevice(object):
     this_host_ip = None
 
@@ -222,7 +225,8 @@ class UpnpDevice(object):
         temp_socket.sendto(message, destination)
  
 
-# This subclass does the bulk of the work to mimic a WeMo switch on the network.
+# This subclass does the bulk of the work to mimic a WeMo switch on
+# the network.
 class Fauxmo(UpnpDevice):
 
     @staticmethod
@@ -435,6 +439,21 @@ def sleep_and_wemo_off(sleep_sec, wemo_name):
     return msg
 
 
+def sleep_camsnap_torchoff(sleep_sec, cam_label, cam_dtm, wemo_name):
+    """if weekday_work or sunday_mass times, then turn off wemo device"""
+    if is_garage_open_time():
+        time.sleep(sleep_sec)  # wait several seconds to get downstairs & flip switch
+        webcam_snap(cam_label, cam_dtm)
+        try:
+            wemo_backend.wemo_dict[wemo_name].off()
+            msg = 'slept for %d sec, snapped pic, then turned off the %s' % (sleep_sec, wemo_name)
+        except ValueError:
+            msg = 'slept for %d sec, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
+    else:
+        msg = 'did nothing for "sleep_camsnap_torchoff" because it is not one of those days/times'
+    return msg
+
+
 def just_squawk(s):
     """for multiprocessing, a callback that shows what's returned from a func eval
     [ whenever that occurs asynchronously ] -- the func here is sleep_and_wemo_off
@@ -479,6 +498,8 @@ class RestApiHandler(object):
 class GarageRestApiHandler(RestApiHandler):
 
     def on(self):
+        """Turning 'on' the garage means open it."""
+        
         dbg("The on_cmd received by %s" % self.__class__.__name__)
         for _ in range(3):
             bstick.set_color(name=self.on_color)
@@ -487,16 +508,22 @@ class GarageRestApiHandler(RestApiHandler):
             time.sleep(0.250)
 
         # ftw
-        toggle_pinout()  # raspberry pi hack to, in effect, push garage door remote via relay
+        dtm = datetime.datetime.now()
+        webcam_snap('close', dtm)  # label this pic as 'close' since expecting garage is closed
+        toggle_pinout(dry_run=DRYRUN)  # raspberry pi hack to, in effect, push garage door button via relay
 
         # depending on day of week and time of day, we push garage door remote button...and
         # use multiprocessing async to do "sleep and torch off" so Alexa does not timeout
-        self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
+        #self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
+        self._pool.apply_async(sleep_camsnap_torchoff, (20, 'open', dtm, 'torch'), callback=just_squawk)
         dbg('Delayed multiprocessing being done async now so Alexa does not timeout')
 
+        # return True is expected
         return True
 
     def off(self):
+        """Turning 'off' the garage means close it."""
+        
         dbg("The off_cmd received by %s" % self.__class__.__name__)
         for _ in range(3):
             bstick.set_color(name=self.off_color)
@@ -505,13 +532,17 @@ class GarageRestApiHandler(RestApiHandler):
             time.sleep(0.250)
 
         # ftw
-        toggle_pinout()  # raspberry pi hack to, in effect, push garage door remote via relay
+        dtm = datetime.datetime.now()
+        webcam_snap('open', dtm)  # label this pic as 'open' since expecting garage is opened
+        toggle_pinout(dry_run=DRYRUN)  # raspberry pi hack to, in effect, push garage door button via relay
 
         # depending on day of week and time of day, we push garage door remote button...and
         # use multiprocessing async to do "sleep and torch off" so Alexa does not timeout
-        self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
+        #self._pool.apply_async(sleep_and_wemo_off, (20, 'torch'), callback=just_squawk)
+        self._pool.apply_async(sleep_camsnap_torchoff, (20, 'close', dtm, 'torch'), callback=just_squawk)
         dbg('Delayed multiprocessing being done async now so Alexa does not timeout')
 
+        # return True is expected
         return True
 
 
