@@ -3,8 +3,11 @@
 import os
 import sys
 import wget
-from private.foscam import URL
+from private.myfoscam import URL, OUTDIR
 
+# NOTE: not in repository, but under private subdir in project, we have:
+# __init__.py  -- blank file
+# myfoscam.py  -- python file that has 2 globals: URL, which has private info,  and OUTDIR
 
 class RedirectStdStreams(object):
     def __init__(self, stdout=None, stderr=None):
@@ -22,7 +25,7 @@ class RedirectStdStreams(object):
         sys.stderr = self.old_stderr
 
 
-def webcam_snap(label, dtm, out_dir='/home/ken/pictures/foscam'):
+def webcam_snap(label, dtm, out_dir=OUTDIR):
     devnull = open(os.devnull, 'w')
     dstr = dtm.strftime('%Y-%m-%d_%H_%M')
     out_file = os.path.join(out_dir, dstr + '_' + label + '.jpg')
