@@ -42,6 +42,7 @@ from multiprocessing import Pool, TimeoutError
 import os
 
 from pims.wemocontrol import wemo_backend
+from webcam import webcam_snap
 
 import RPi.GPIO as GPIO
 
@@ -69,7 +70,7 @@ SETUP_XML = """<?xml version="1.0"?>
 
 
 DEBUG = False
-DRYRUN = True
+DRYRUN = False
 
 def dbg(msg):
     global DEBUG
@@ -412,8 +413,11 @@ def is_sunday_mass_time(start_time, end_time):
     return b
 
 
-def is_garage_open_time():
+def is_garage_open_time(dry_run=DRYRUN):
     """return True if it's day/time for work or for mass"""
+    if dry_run:
+        return True
+    
     # define "go to work" time range (t1, t2) for a weekday
     t1 = datetime.datetime(2017, 8, 31, 5, 40, 0).time()  # only consider time part
     t2 = datetime.datetime(2017, 8, 31, 6, 50, 0).time()  # only consider time part
@@ -440,17 +444,20 @@ def sleep_and_wemo_off(sleep_sec, wemo_name):
 
 
 def sleep_camsnap_torchoff(sleep_sec, cam_label, cam_dtm, wemo_name):
-    """if weekday_work or sunday_mass times, then turn off wemo device"""
+    """sleep, snap pic and if weekday_work or sunday_mass times, then turn off wemo device"""
+    
+    time.sleep(sleep_sec)  # wait several seconds to get downstairs & flip switch
+    webcam_snap(cam_label, cam_dtm)
+        
     if is_garage_open_time():
-        time.sleep(sleep_sec)  # wait several seconds to get downstairs & flip switch
-        webcam_snap(cam_label, cam_dtm)
         try:
             wemo_backend.wemo_dict[wemo_name].off()
             msg = 'slept for %d sec, snapped pic, then turned off the %s' % (sleep_sec, wemo_name)
         except ValueError:
-            msg = 'slept for %d sec, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
+            msg = 'slept for %d sec, snapped pic, but caught ValueError turning off the %s' % (sleep_sec, wemo_name)
     else:
-        msg = 'did nothing for "sleep_camsnap_torchoff" because it is not one of those days/times'
+        msg = 'slept and snapped, but did nothing for "sleep_camsnap_torchoff" because it is not one of those days/times'
+        
     return msg
 
 
@@ -555,10 +562,11 @@ class GarageRestApiHandler(RestApiHandler):
 # NOTE: As of 2015-08-17, the Echo appears to have a hard-coded limit of
 # 16 switches it can control. Only the first 16 elements of the FAUXMOS
 # list will be used.
+# NOTE: the ip address is the one we have for biscaynepi-wired
 FAUXMOS = [
-    ['office lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=office', 'http://192.168.1.109/ha-api?cmd=off&a=office', on_color='cyan', off_color='magenta')],
-    ['kitchen lights', RestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=kitchen', 'http://192.168.1.109/ha-api?cmd=off&a=kitchen', on_color='orange', off_color='blue')],
-    ['garage door', GarageRestApiHandler('http://192.168.1.109/ha-api?cmd=on&a=garage', 'http://192.168.1.109/ha-api?cmd=off&a=garage', on_color='green', off_color='red')],
+    ['office lights', RestApiHandler('http://192.168.1.108/ha-api?cmd=on&a=office', 'http://192.168.1.108/ha-api?cmd=off&a=office', on_color='cyan', off_color='magenta')],
+    ['kitchen lights', RestApiHandler('http://192.168.1.108/ha-api?cmd=on&a=kitchen', 'http://192.168.1.108/ha-api?cmd=off&a=kitchen', on_color='orange', off_color='blue')],
+    ['garage door', GarageRestApiHandler('http://192.168.1.108/ha-api?cmd=on&a=garage', 'http://192.168.1.108/ha-api?cmd=off&a=garage', on_color='green', off_color='red')],
 ]
 
 
@@ -594,3 +602,9 @@ while True:
         dbg(e)
         break
 
+# NOTE TO SELF:
+#  pgrep -afl python
+#  IF the only python(s) are associated with fauxmo, THEN [ TEN PIDs for threads? ]
+#  killall python
+#  TO START IT BACK AGAIN:
+#  nohup fauxmo &

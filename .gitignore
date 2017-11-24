@@ -1,2 +1,8 @@
 # Private
 private/
+
+# Unwanted
+.AppleDouble/
+.DS_Store
+.idea/
+*.pyc
