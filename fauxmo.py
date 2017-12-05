@@ -1,4 +1,4 @@
-#!/usr/bin/env python -B
+#!/usr/bin/env python
 
 """
 The MIT License (MIT)
@@ -83,7 +83,7 @@ def log(msg):
     dbg(msg)
 
 
-def toggle_pinout(pinout=17, sec=1, dry_run=False):
+def toggle_pinout(pinout=27, sec=1, dry_run=False):
     if dry_run:
         dbg('Need dry_run=False for toggle_pinout to actually work.')
         return
@@ -505,7 +505,7 @@ class RestApiHandler(object):
 class GarageRestApiHandler(RestApiHandler):
 
     def on(self):
-        """Turning 'on' the garage means open it."""
+        """ The signal 'Alexa, turn on the garage' means open it."""
         
         dbg("The on_cmd received by %s" % self.__class__.__name__)
         for _ in range(3):
@@ -529,7 +529,7 @@ class GarageRestApiHandler(RestApiHandler):
         return True
 
     def off(self):
-        """Turning 'off' the garage means close it."""
+        """ The signal 'Alexa, turn off the garage' means close it."""
         
         dbg("The off_cmd received by %s" % self.__class__.__name__)
         for _ in range(3):
